@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Réponse enregistrée — Bump</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: linear-gradient(160deg, #f8fafc 0%, #eef2ff 100%);
+      color: #1a202c;
+    }
+    main {
+      width: min(100% - 2rem, 28rem);
+      background: #fff;
+      border-radius: 1rem;
+      padding: 2rem 1.5rem;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      text-align: center;
+    }
+    h1 {
+      margin: 0 0 0.75rem;
+      font-size: 1.35rem;
+      line-height: 1.3;
+    }
+    p {
+      margin: 0;
+      color: #64748b;
+      line-height: 1.55;
+      font-size: 0.98rem;
+    }
+    .logo {
+      display: inline-block;
+      margin-bottom: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      color: #e53e3e;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="logo">Bump Charge</div>
+    <h1 id="title">Enregistrement en cours…</h1>
+    <p id="detail">Merci de patienter quelques instants.</p>
+  </main>
+
+  <script>
+    // Webhook Retool du workflow pdp-reponse-webhook
+    const WEBHOOK_URL =
+      "https://bumpcharge.retool.com/url/pdp-webhook?workflowApiKey=retool_wk_cf0ace94fc314784a9ca5069f166c643";
+
+    const title = document.getElementById("title");
+    const detail = document.getElementById("detail");
+
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("id");
+    const choix = params.get("choix");
+    const sig = params.get("sig");
+    const client_nom = params.get("client_nom") || "";
+    const date_expiration = params.get("date_expiration") || "";
+
+    function show(okTitle, okDetail) {
+      title.textContent = okTitle;
+      detail.textContent = okDetail;
+    }
+
+    async function run() {
+      if (!id || !choix || !sig || (choix !== "OUI" && choix !== "NON")) {
+        show("Lien invalide", "Ce lien de réponse est incomplet ou incorrect.");
+        return;
+      }
+
+      const dedupeKey = `pdp-reponse-${id}-${choix}-${sig}`;
+      if (sessionStorage.getItem(dedupeKey)) {
+        show(
+          "Réponse déjà prise en compte",
+          "Merci, nous avons bien enregistré votre choix."
+        );
+        return;
+      }
+
+      const url = new URL(WEBHOOK_URL);
+      url.searchParams.set("id", String(id));
+      url.searchParams.set("choix", choix);
+      url.searchParams.set("sig", sig);
+      url.searchParams.set("client_nom", client_nom);
+      url.searchParams.set("date_expiration", date_expiration);
+
+      // no-cors : le navigateur envoie bien la requête (déclenche le workflow),
+      // sans bloquer sur les en-têtes CORS de Retool.
+      try {
+        await fetch(url.toString(), {
+          method: "GET",
+          mode: "no-cors",
+          keepalive: true,
+          cache: "no-store",
+        });
+      } catch (_) {
+        // Même en cas d'erreur réseau, on affiche le message métier :
+        // l'idempotence SQL côté webhook évite les doublons.
+      }
+
+      sessionStorage.setItem(dedupeKey, "1");
+
+      if (choix === "OUI") {
+        show(
+          "Réponse prise en compte",
+          "Merci, votre demande de renouvellement a bien été enregistrée. Nos équipes vont vous recontacter."
+        );
+      } else {
+        show(
+          "Réponse prise en compte",
+          "Merci, nous avons bien enregistré que vous ne souhaitez pas renouveler."
+        );
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>
