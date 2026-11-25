@@ -3,11 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
   <title>Réponse enregistrée — Bump</title>
   <style>
-    :root {
-      color-scheme: light;
-    }
+    :root { color-scheme: light; }
     body {
       margin: 0;
       min-height: 100vh;
@@ -31,7 +30,7 @@
       line-height: 1.3;
     }
     p {
-      margin: 0;
+      margin: 0 0 1.25rem;
       color: #64748b;
       line-height: 1.55;
       font-size: 0.98rem;
@@ -45,22 +44,39 @@
       font-size: 0.85rem;
       text-transform: uppercase;
     }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 0.75rem;
+      padding: 0.85rem 1.25rem;
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: #fff;
+      background: #e53e3e;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    button.hidden { display: none; }
   </style>
 </head>
 <body>
   <main>
     <div class="logo">Bump Charge</div>
-    <h1 id="title">Enregistrement en cours…</h1>
-    <p id="detail">Merci de patienter quelques instants.</p>
+    <h1 id="title">Confirmation</h1>
+    <p id="detail">Chargement…</p>
+    <button id="confirmBtn" class="hidden" type="button">Confirmer ma réponse</button>
   </main>
 
   <script>
-    // Webhook Retool du workflow pdp-reponse-webhook
     const WEBHOOK_URL =
       "https://bumpcharge.retool.com/url/pdp-webhook?workflowApiKey=retool_wk_cf0ace94fc314784a9ca5069f166c643";
 
     const title = document.getElementById("title");
     const detail = document.getElementById("detail");
+    const confirmBtn = document.getElementById("confirmBtn");
 
     const params = new URLSearchParams(window.location.search);
     const id = params.get("id");
@@ -69,63 +85,92 @@
     const client_nom = params.get("client_nom") || "";
     const date_expiration = params.get("date_expiration") || "";
 
-    function show(okTitle, okDetail) {
+    const dedupeKey =
+      id && choix && sig ? `pdp-reponse-sent-${id}-${choix}-${sig}` : null;
+
+    let sending = false;
+
+    function show(okTitle, okDetail, showButton) {
       title.textContent = okTitle;
       detail.textContent = okDetail;
+      confirmBtn.classList.toggle("hidden", !showButton);
     }
 
-    async function run() {
-      if (!id || !choix || !sig || (choix !== "OUI" && choix !== "NON")) {
-        show("Lien invalide", "Ce lien de réponse est incomplet ou incorrect.");
-        return;
-      }
-
-      const dedupeKey = `pdp-reponse-${id}-${choix}-${sig}`;
-      if (sessionStorage.getItem(dedupeKey)) {
+    function successMessage() {
+      if (choix === "OUI") {
         show(
-          "Réponse déjà prise en compte",
-          "Merci, nous avons bien enregistré votre choix."
+          "Réponse prise en compte",
+          "Merci, votre demande de renouvellement a bien été enregistrée. Nos équipes vont vous recontacter.",
+          false
         );
-        return;
+      } else {
+        show(
+          "Réponse prise en compte",
+          "Merci, nous avons bien enregistré que vous ne souhaitez pas renouveler.",
+          false
+        );
       }
+    }
 
+    function buildWebhookUrl() {
       const url = new URL(WEBHOOK_URL);
       url.searchParams.set("id", String(id));
       url.searchParams.set("choix", choix);
       url.searchParams.set("sig", sig);
       url.searchParams.set("client_nom", client_nom);
       url.searchParams.set("date_expiration", date_expiration);
+      return url.toString();
+    }
 
-      // no-cors : le navigateur envoie bien la requête (déclenche le workflow),
-      // sans bloquer sur les en-têtes CORS de Retool.
+    async function sendOnce() {
+      if (!dedupeKey || sending) return;
+      if (sessionStorage.getItem(dedupeKey)) {
+        successMessage();
+        return;
+      }
+
+      // Verrouille AVANT l'appel pour éviter un double envoi
+      sending = true;
+      sessionStorage.setItem(dedupeKey, "1");
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Envoi…";
+
       try {
-        await fetch(url.toString(), {
+        await fetch(buildWebhookUrl(), {
           method: "GET",
           mode: "no-cors",
-          keepalive: true,
           cache: "no-store",
         });
       } catch (_) {
-        // Même en cas d'erreur réseau, on affiche le message métier :
-        // l'idempotence SQL côté webhook évite les doublons.
+        // no-cors / réseau : l'idempotence SQL côté webhook couvre les doublons
       }
 
-      sessionStorage.setItem(dedupeKey, "1");
-
-      if (choix === "OUI") {
-        show(
-          "Réponse prise en compte",
-          "Merci, votre demande de renouvellement a bien été enregistrée. Nos équipes vont vous recontacter."
-        );
-      } else {
-        show(
-          "Réponse prise en compte",
-          "Merci, nous avons bien enregistré que vous ne souhaitez pas renouveler."
-        );
-      }
+      successMessage();
     }
 
-    run();
+    function init() {
+      if (!id || !choix || !sig || (choix !== "OUI" && choix !== "NON")) {
+        show("Lien invalide", "Ce lien de réponse est incomplet ou incorrect.", false);
+        return;
+      }
+
+      if (sessionStorage.getItem(dedupeKey)) {
+        successMessage();
+        return;
+      }
+
+      // Pas d'appel auto : évite le double trigger (préchargement mail + clic).
+      show(
+        choix === "OUI" ? "Confirmer le renouvellement" : "Confirmer votre refus",
+        choix === "OUI"
+          ? "Vous avez choisi de renouveler votre plan de prévention. Cliquez ci-dessous pour valider."
+          : "Vous avez choisi de ne pas renouveler. Cliquez ci-dessous pour valider.",
+        true
+      );
+      confirmBtn.addEventListener("click", sendOnce, { once: true });
+    }
+
+    init();
   </script>
 </body>
 </html>
